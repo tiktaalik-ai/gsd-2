@@ -2752,19 +2752,20 @@ export class InteractiveMode {
 	}
 
 	private handleThinkingCommand(arg?: string): void {
-		const availableLevels = this.session.getAvailableThinkingLevels();
-		if (availableLevels.length === 0) {
+		if (!this.session.supportsThinking()) {
 			this.showStatus("Current model does not support thinking");
 			return;
 		}
 
+		const availableLevels = this.session.getAvailableThinkingLevels();
+
 		if (arg) {
-			const level = arg.toLowerCase() as ThinkingLevel;
-			if (!availableLevels.includes(level)) {
+			const level = arg.toLowerCase();
+			if (!availableLevels.includes(level as ThinkingLevel)) {
 				this.showStatus(`Invalid thinking level "${arg}". Available: ${availableLevels.join(", ")}`);
 				return;
 			}
-			this.session.setThinkingLevel(level);
+			this.session.setThinkingLevel(level as ThinkingLevel);
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 			this.showStatus(`Thinking level: ${level}`);
