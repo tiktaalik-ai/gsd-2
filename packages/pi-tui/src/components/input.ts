@@ -22,7 +22,17 @@ export class Input implements Component, Focusable {
 	public onEscape?: () => void;
 
 	/** Focusable interface - set by TUI when focus changes */
-	focused: boolean = false;
+	private _focused: boolean = false;
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+		if (!value) {
+			this.isInPaste = false;
+			this.pasteBuffer = "";
+		}
+	}
 
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
