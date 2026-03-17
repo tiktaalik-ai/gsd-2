@@ -73,6 +73,7 @@
 | `gsd --print "msg"` (`-p`) | Single-shot prompt mode (no TUI) |
 | `gsd --mode <text\|json\|rpc\|mcp>` | Output mode for non-interactive use |
 | `gsd --list-models [search]` | List available models and exit |
+| `gsd sessions` | Interactive session picker — list all saved sessions for the current directory and choose one to resume |
 | `gsd --debug` | Enable structured JSONL diagnostic logging for troubleshooting dispatch and state issues |
 | `gsd config` | Re-run the setup wizard (LLM provider + tool keys) |
 | `gsd update` | Update GSD to the latest version |

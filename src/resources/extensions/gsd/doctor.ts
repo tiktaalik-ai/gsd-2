@@ -41,7 +41,8 @@ export type DoctorIssueCode =
   | "activity_log_bloat"
   | "state_file_stale"
   | "state_file_missing"
-  | "gitignore_missing_patterns";
+  | "gitignore_missing_patterns"
+  | "unresolvable_dependency";
 
 export interface DoctorIssue {
   severity: DoctorSeverity;
@@ -1039,6 +1040,24 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
           file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
           fixable: false,
         });
+      }
+
+      // Check for unresolvable dependency IDs — catches range syntax like "S01-S04"
+      // that the parser expanded but that don't match any actual slice in the roadmap.
+      // Also catches plain typos or IDs referencing slices not yet defined.
+      const knownSliceIds = new Set(roadmap.slices.map(s => s.id));
+      for (const dep of slice.depends) {
+        if (!knownSliceIds.has(dep)) {
+          issues.push({
+            severity: "warning",
+            code: "unresolvable_dependency",
+            scope: "slice",
+            unitId,
+            message: `Slice ${unitId} depends on "${dep}" which is not a slice ID in this roadmap. This permanently blocks the slice. Use comma-separated IDs: \`depends:[S01,S02]\``,
+            file: relMilestoneFile(basePath, milestoneId, "ROADMAP"),
+            fixable: false,
+          });
+        }
       }
 
       const slicePath = resolveSlicePath(basePath, milestoneId, slice.id);

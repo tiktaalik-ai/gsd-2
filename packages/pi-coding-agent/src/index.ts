@@ -235,6 +235,7 @@ export {
 	type BashToolInput,
 	type BashToolOptions,
 	bashTool,
+	rewriteBackgroundCommand,
 	checkBashInterception,
 	type CompiledInterceptor,
 	compileInterceptor,

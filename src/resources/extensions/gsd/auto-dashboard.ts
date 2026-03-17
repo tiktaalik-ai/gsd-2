@@ -41,6 +41,8 @@ export interface AutoDashboardData {
   profileDowngraded?: boolean;
   /** Number of pending captures awaiting triage (0 if none or file missing) */
   pendingCaptureCount: number;
+  /** Cross-process: another auto-mode session detected via auto.lock (PID, startedAt) */
+  remoteSession?: { pid: number; startedAt: string; unitType: string; unitId: string };
 }
 
 // ─── Unit Description Helpers ─────────────────────────────────────────────────

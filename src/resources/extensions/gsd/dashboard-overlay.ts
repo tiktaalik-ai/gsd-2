@@ -319,16 +319,23 @@ export class GSDDashboardOverlay {
     const centered = (content: string) => row(centerLine(content, contentWidth));
 
     const title = th.fg("accent", th.bold("GSD Dashboard"));
+    const isRemote = !!this.dashData.remoteSession;
     const status = this.dashData.active
       ? `${Date.now() % 2000 < 1000 ? th.fg("success", "●") : th.fg("dim", "○")} ${th.fg("success", "AUTO")}`
       : this.dashData.paused
         ? th.fg("warning", "⏸ PAUSED")
-        : th.fg("dim", "idle");
+        : isRemote
+          ? `${Date.now() % 2000 < 1000 ? th.fg("success", "●") : th.fg("dim", "○")} ${th.fg("success", "AUTO")} ${th.fg("dim", `(PID ${this.dashData.remoteSession!.pid})`)}`
+          : th.fg("dim", "idle");
     const worktreeName = getActiveWorktreeName();
     const worktreeTag = worktreeName
       ? `  ${th.fg("warning", `⎇ ${worktreeName}`)}`
       : "";
-    const elapsed = th.fg("dim", formatDuration(this.dashData.elapsed));
+    const elapsed = this.dashData.active || this.dashData.paused
+      ? th.fg("dim", formatDuration(this.dashData.elapsed))
+      : isRemote
+        ? th.fg("dim", `since ${this.dashData.remoteSession!.startedAt.replace("T", " ").slice(0, 19)}`)
+        : "";
     lines.push(row(joinColumns(`${title}  ${status}${worktreeTag}`, elapsed, contentWidth)));
     lines.push(blank());
 
@@ -343,6 +350,13 @@ export class GSDDashboardOverlay {
       lines.push(blank());
     } else if (this.dashData.paused) {
       lines.push(row(th.fg("dim", "/gsd auto to resume")));
+      lines.push(blank());
+    } else if (isRemote) {
+      const rs = this.dashData.remoteSession!;
+      const unitDisplay = rs.unitType === "starting" || rs.unitType === "resuming"
+        ? rs.unitType
+        : `${unitLabel(rs.unitType)} ${rs.unitId}`;
+      lines.push(row(th.fg("text", `Remote session: ${unitDisplay}`)));
       lines.push(blank());
     } else {
       lines.push(row(th.fg("dim", "No unit running · /gsd auto to start")));

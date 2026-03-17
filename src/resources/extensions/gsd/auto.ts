@@ -223,6 +223,11 @@ const MAX_LIFETIME_DISPATCHES = 6;
 /** Tracks recovery attempt count per unit for backoff and diagnostics. */
 const unitRecoveryCount = new Map<string, number>();
 
+/** Track consecutive skips per unit — catches infinite skip loops where deriveState
+ *  keeps returning the same already-completed unit. Reset on any real dispatch. */
+const unitConsecutiveSkips = new Map<string, number>();
+const MAX_CONSECUTIVE_SKIPS = 3;
+
 /** Persisted completed-unit keys — survives restarts. Loaded from .gsd/completed-units.json. */
 const completedKeySet = new Set<string>();
 
@@ -349,8 +354,12 @@ let lastBaselineCharCount: number | undefined;
 /** SIGTERM handler registered while auto-mode is active — cleared on stop/pause. */
 let _sigtermHandler: (() => void) | null = null;
 
-/** Tool calls currently being executed — prevents false idle detection during long-running tools. */
-const inFlightTools = new Set<string>();
+/**
+ * Tool calls currently being executed — prevents false idle detection during long-running tools.
+ * Maps toolCallId → start timestamp (ms) so the idle watchdog can detect tools that have been
+ * running suspiciously long (e.g., a Bash command hung because `&` kept stdout open).
+ */
+const inFlightTools = new Map<string, number>();
 
 type BudgetAlertLevel = 0 | 75 | 90 | 100;
 
@@ -429,11 +438,11 @@ export function isAutoPaused(): boolean {
 
 /**
  * Mark a tool execution as in-flight. Called from index.ts on tool_execution_start.
- * Prevents the idle watchdog from declaring the agent idle while tools are executing.
+ * Records start time so the idle watchdog can detect tools hung longer than the idle timeout.
  */
 export function markToolStart(toolCallId: string): void {
   if (!active) return;
-  inFlightTools.add(toolCallId);
+  inFlightTools.set(toolCallId, Date.now());
 }
 
 /**
@@ -441,6 +450,16 @@ export function markToolStart(toolCallId: string): void {
  */
 export function markToolEnd(toolCallId: string): void {
   inFlightTools.delete(toolCallId);
+}
+
+/**
+ * Returns the age (ms) of the oldest currently in-flight tool, or 0 if none.
+ * Exported for testing.
+ */
+export function getOldestInFlightToolAgeMs(): number {
+  if (inFlightTools.size === 0) return 0;
+  const oldestStart = Math.min(...inFlightTools.values());
+  return Date.now() - oldestStart;
 }
 
 /**
@@ -636,6 +655,7 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI): Promi
   stepMode = false;
   unitDispatchCount.clear();
   unitRecoveryCount.clear();
+  unitConsecutiveSkips.clear();
   inFlightTools.clear();
   lastBudgetAlertLevel = 0;
   unitLifetimeDispatches.clear();
@@ -726,6 +746,7 @@ export async function startAuto(
     basePath = base;
     unitDispatchCount.clear();
     unitLifetimeDispatches.clear();
+    unitConsecutiveSkips.clear();
     // Re-initialize metrics in case ledger was lost during pause
     if (!getLedger()) initMetrics(base);
     // Ensure milestone ID is set on git service for integration branch resolution
@@ -797,6 +818,9 @@ export async function startAuto(
       }
       pausedSessionFile = null;
     }
+
+    // Write lock on resume so cross-process status detection works (#723).
+    writeLock(lockBase(), "resuming", currentMilestoneId ?? "unknown", completedUnits.length);
 
     await dispatchNextUnit(ctx, pi);
     return;
@@ -1004,6 +1028,7 @@ export async function startAuto(
   basePath = base;
   unitDispatchCount.clear();
   unitRecoveryCount.clear();
+  unitConsecutiveSkips.clear();
   lastBudgetAlertLevel = 0;
   unitLifetimeDispatches.clear();
   completedKeySet.clear();
@@ -1132,6 +1157,11 @@ export async function startAuto(
     ? `Will loop through ${pendingCount} milestones.`
     : "Will loop until milestone complete.";
   ctx.ui.notify(`${modeLabel} started. ${scopeMsg}`, "info");
+
+  // Write initial lock file immediately so cross-process status detection
+  // works even before the first unit is dispatched (#723).
+  // The lock is updated with unit-specific info on each dispatch and cleared on stop.
+  writeLock(lockBase(), "starting", currentMilestoneId ?? "unknown", 0);
 
   // Secrets collection gate — collect pending secrets before first dispatch
   const mid = state.activeMilestone!.id;
@@ -1585,7 +1615,7 @@ export async function handleAgentEnd(
               return;
             }
             const sessionFile = ctx.sessionManager.getSessionFile();
-            writeLock(basePath, triageUnitType, triageUnitId, completedUnits.length, sessionFile);
+            writeLock(lockBase(), triageUnitType, triageUnitId, completedUnits.length, sessionFile);
 
             // Start unit timeout for triage (use same supervisor config as hooks)
             clearUnitTimeout();
@@ -1931,6 +1961,7 @@ async function dispatchNextUnit(
     // Reset stuck detection for new milestone
     unitDispatchCount.clear();
     unitRecoveryCount.clear();
+  unitConsecutiveSkips.clear();
     unitLifetimeDispatches.clear();
     // Clear completed-units.json for the finished milestone
     try {
@@ -2298,6 +2329,26 @@ async function dispatchNextUnit(
     // Cross-validate: does the expected artifact actually exist?
     const artifactExists = verifyExpectedArtifact(unitType, unitId, basePath);
     if (artifactExists) {
+      // Guard against infinite skip loops: if deriveState keeps returning the
+      // same completed unit, consecutive skips will trip this breaker. Evict the
+      // key so the next dispatch forces full reconciliation instead of looping.
+      const skipCount = (unitConsecutiveSkips.get(idempotencyKey) ?? 0) + 1;
+      unitConsecutiveSkips.set(idempotencyKey, skipCount);
+      if (skipCount > MAX_CONSECUTIVE_SKIPS) {
+        unitConsecutiveSkips.delete(idempotencyKey);
+        completedKeySet.delete(idempotencyKey);
+        removePersistedKey(basePath, idempotencyKey);
+        invalidateStateCache();
+        ctx.ui.notify(
+          `Skip loop detected: ${unitType} ${unitId} skipped ${skipCount} times without advancing. Evicting completion record and forcing reconciliation.`,
+          "warning",
+        );
+        _skipDepth++;
+        await new Promise(r => setTimeout(r, 50));
+        await dispatchNextUnit(ctx, pi);
+        _skipDepth = Math.max(0, _skipDepth - 1);
+        return;
+      }
       ctx.ui.notify(
         `Skipping ${unitType} ${unitId} — already completed in a prior session. Advancing.`,
         "info",
@@ -2327,6 +2378,24 @@ async function dispatchNextUnit(
     persistCompletedKey(basePath, idempotencyKey);
     completedKeySet.add(idempotencyKey);
     invalidateStateCache();
+    // Same consecutive-skip guard as the idempotency path above.
+    const skipCount2 = (unitConsecutiveSkips.get(idempotencyKey) ?? 0) + 1;
+    unitConsecutiveSkips.set(idempotencyKey, skipCount2);
+    if (skipCount2 > MAX_CONSECUTIVE_SKIPS) {
+      unitConsecutiveSkips.delete(idempotencyKey);
+      completedKeySet.delete(idempotencyKey);
+      removePersistedKey(basePath, idempotencyKey);
+      invalidateStateCache();
+      ctx.ui.notify(
+        `Skip loop detected: ${unitType} ${unitId} skipped ${skipCount2} times without advancing. Evicting completion record and forcing reconciliation.`,
+        "warning",
+      );
+      _skipDepth++;
+      await new Promise(r => setTimeout(r, 50));
+      await dispatchNextUnit(ctx, pi);
+      _skipDepth = Math.max(0, _skipDepth - 1);
+      return;
+    }
     ctx.ui.notify(
       `Skipping ${unitType} ${unitId} — artifact exists but completion key was missing. Repaired and advancing.`,
       "info",
@@ -2342,6 +2411,8 @@ async function dispatchNextUnit(
   // Pattern A→B→A→B would reset retryCount every time; this map catches it.
   const dispatchKey = `${unitType}/${unitId}`;
   const prevCount = unitDispatchCount.get(dispatchKey) ?? 0;
+  // Real dispatch reached — clear the consecutive-skip counter for this unit.
+  unitConsecutiveSkips.delete(dispatchKey);
 
   debugLog("dispatch-unit", {
     type: unitType,
@@ -2856,13 +2927,27 @@ async function dispatchNextUnit(
     if (Date.now() - runtime.lastProgressAt < idleTimeoutMs) return;
 
     // Agent has tool calls currently executing (await_job, long bash, etc.) —
-    // not idle, just waiting for tool completion.
+    // not idle, just waiting for tool completion. But only suppress recovery
+    // if the tool started recently. A tool in-flight for longer than the idle
+    // timeout is likely stuck — e.g., `python -m http.server 8080 &` keeps the
+    // shell's stdout/stderr open, causing the Bash tool to hang indefinitely.
     if (inFlightTools.size > 0) {
-      writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit.startedAt, {
-        lastProgressAt: Date.now(),
-        lastProgressKind: "tool-in-flight",
-      });
-      return;
+      const oldestStart = Math.min(...inFlightTools.values());
+      const toolAgeMs = Date.now() - oldestStart;
+      if (toolAgeMs < idleTimeoutMs) {
+        writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnit.startedAt, {
+          lastProgressAt: Date.now(),
+          lastProgressKind: "tool-in-flight",
+        });
+        return;
+      }
+      // Oldest tool has been running >= idleTimeoutMs — treat as a stuck/hung
+      // tool (e.g., background process holding stdout open). Fall through to
+      // idle recovery without resetting the progress clock.
+      ctx.ui.notify(
+        `Stalled tool detected: a tool has been in-flight for ${Math.round(toolAgeMs / 60000)}min. Treating as hung — attempting idle recovery.`,
+        "warning",
+      );
     }
 
     // Before triggering recovery, check if the agent is actually producing
@@ -3286,6 +3371,14 @@ export {
   skipExecuteTask,
   buildLoopRemediationSteps,
 } from "./auto-recovery.js";
+
+/**
+ * Test-only: expose skip-loop state for unit tests.
+ * Not part of the public API.
+ */
+export function _getUnitConsecutiveSkips(): Map<string, number> { return unitConsecutiveSkips; }
+export function _resetUnitConsecutiveSkips(): void { unitConsecutiveSkips.clear(); }
+export { MAX_CONSECUTIVE_SKIPS };
 
 /**
  * Dispatch a hook unit directly, bypassing normal pre-dispatch hooks.

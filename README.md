@@ -277,6 +277,7 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 | `gsd update`            | Update GSD to the latest version                                |
 | `gsd headless [cmd]`    | Run `/gsd` commands without TUI (CI, cron, scripts)             |
 | `gsd --continue` (`-c`) | Resume the most recent session for the current directory        |
+| `gsd sessions`          | Interactive session picker — browse and resume any saved session |
 
 ---
 
@@ -418,7 +419,7 @@ GSD ships with 14 extensions, all loaded automatically:
 | Extension              | What it provides                                                                                                       |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **GSD**                | Core workflow engine, auto mode, commands, dashboard                                                                   |
-| **Browser Tools**      | Playwright-based browser with form intelligence, intent-ranked element finding, and semantic actions                   |
+| **Browser Tools**      | Playwright-based browser with form intelligence, intent-ranked element finding, semantic actions, PDF export, session state persistence, network mocking, device emulation, structured extraction, visual diffing, region zoom, test code generation, and prompt injection detection |
 | **Search the Web**     | Brave Search, Tavily, or Jina page extraction                                                                          |
 | **Google Search**      | Gemini-powered web search with AI-synthesized answers                                                                  |
 | **Context7**           | Up-to-date library/framework documentation                                                                             |

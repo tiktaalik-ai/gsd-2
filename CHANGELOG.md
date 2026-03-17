@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **`gsd sessions`** — interactive session picker: lists all saved sessions for the current directory with date, message count, and first-message preview; lets you pick one to resume. Compare with `--continue` which always resumes the most recent session. (#721)
+- **10 new browser tools** — shipped from the #698 feature additions: `browser_save_pdf`, `browser_save_state`, `browser_restore_state`, `browser_mock_route`, `browser_block_urls`, `browser_clear_routes`, `browser_emulate_device`, `browser_extract`, `browser_visual_diff`, `browser_zoom_region`, `browser_generate_test`, `browser_check_injection`, `browser_action_cache` (#698)
+
+### Fixed
+- Shift-Tab now navigates to previous tab in the workflow visualizer (#717)
+- Capture resolutions are now executed after triage instead of only being classified (#714)
+- Screenshot constraining uses independent width/height caps to prevent squishing (#725)
+- `auto.lock` is written at process startup; remote sessions are now detected in the dashboard (#723)
+- Cross-platform test compatibility: use `process.ppid` instead of PID 1
+
 ## [2.22.0] - 2026-03-16
 
 ### Added

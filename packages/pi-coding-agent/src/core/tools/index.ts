@@ -7,6 +7,7 @@ export {
 	type BashToolOptions,
 	bashTool,
 	createBashTool,
+	rewriteBackgroundCommand,
 } from "./bash.js";
 export {
 	type BashInterceptorRule,
