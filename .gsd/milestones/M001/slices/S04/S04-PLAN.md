@@ -50,7 +50,7 @@
   - Verify: `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/resources/extensions/gsd/tests/schema-v9-sequence.test.ts`
   - Done when: All 6 ORDER BY queries use `sequence, id`, test file passes, existing tests unbroken
 
-- [ ] **T02: Migrate dispatch-guard.ts to DB queries and update tests** `est:45m`
+- [x] **T02: Migrate dispatch-guard.ts to DB queries and update tests** `est:45m`
   - Why: dispatch-guard re-parses ROADMAP.md on every slice dispatch — the single hottest parser caller. R009 requires this migration.
   - Files: `src/resources/extensions/gsd/dispatch-guard.ts`, `src/resources/extensions/gsd/tests/dispatch-guard.test.ts`
   - Do: Replace `parseRoadmapSlices(roadmapContent)` with `getMilestoneSlices(mid)`. Map `SliceRow.status === 'complete'` to `done: true`. Remove `readRoadmapFromDisk()`, `readFileSync`, and `parseRoadmapSlices` imports. Add `isDbAvailable()` + `getMilestoneSlices()` import from `gsd-db.js`. Keep the `findMilestoneIds()` disk-based milestone discovery (DB doesn't own milestone queue order). Add fallback to disk parsing when `!isDbAvailable()`. Update all 8 test cases to seed DB via `openDatabase`/`insertMilestone`/`insertSlice` instead of writing ROADMAP markdown files. Preserve all existing assertion semantics.

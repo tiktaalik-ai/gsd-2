@@ -1,10 +1,26 @@
 // GSD Dispatch Guard — prevents out-of-order slice dispatch
 
 import { readFileSync } from "node:fs";
-import { readdirSync } from "node:fs";
-import { resolveMilestoneFile, milestonesDir } from "./paths.js";
-import { parseRoadmapSlices } from "./roadmap-slices.js";
+import { createRequire } from "node:module";
+import { resolveMilestoneFile } from "./paths.js";
 import { findMilestoneIds } from "./guided-flow.js";
+import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
+
+// Lazy-loaded parser — only resolved when DB is unavailable (fallback path).
+// Uses createRequire so the function stays synchronous. Tries .ts first (strip-types dev)
+// then .js (compiled production).
+let _lazyParser: ((content: string) => { id: string; done: boolean; depends: string[] }[]) | null = null;
+function lazyParseRoadmapSlices(content: string) {
+  if (!_lazyParser) {
+    const req = createRequire(import.meta.url);
+    try {
+      _lazyParser = req("./roadmap-slices.ts").parseRoadmapSlices;
+    } catch {
+      _lazyParser = req("./roadmap-slices.js").parseRoadmapSlices;
+    }
+  }
+  return _lazyParser!(content);
+}
 
 const SLICE_DISPATCH_TYPES = new Set([
   "research-slice",
@@ -58,11 +74,25 @@ export function getPriorSliceCompletionBlocker(
     if (resolveMilestoneFile(base, mid, "PARKED")) continue;
     if (resolveMilestoneFile(base, mid, "SUMMARY")) continue;
 
-    // Read from disk (working tree) — always has the latest state
-    const roadmapContent = readRoadmapFromDisk(base, mid);
-    if (!roadmapContent) continue;
+    // Normalised slice list: prefer DB, fall back to disk parsing
+    type NormSlice = { id: string; done: boolean; depends: string[] };
+    let slices: NormSlice[];
 
-    const slices = parseRoadmapSlices(roadmapContent);
+    if (isDbAvailable()) {
+      const rows = getMilestoneSlices(mid);
+      if (rows.length === 0) continue;
+      slices = rows.map((r) => ({
+        id: r.id,
+        done: r.status === "complete",
+        depends: r.depends ?? [],
+      }));
+    } else {
+      // Fallback: disk parsing when DB is not yet initialised
+      const roadmapContent = readRoadmapFromDisk(base, mid);
+      if (!roadmapContent) continue;
+      slices = lazyParseRoadmapSlices(roadmapContent);
+    }
+
     if (mid !== targetMid) {
       const incomplete = slices.find((slice) => !slice.done);
       if (incomplete) {

@@ -51,3 +51,10 @@ Replace `parseRoadmapSlices()` in `dispatch-guard.ts` with `getMilestoneSlices()
 
 - `src/resources/extensions/gsd/dispatch-guard.ts` — migrated to DB queries with disk fallback
 - `src/resources/extensions/gsd/tests/dispatch-guard.test.ts` — updated to seed DB state
+
+## Observability Impact
+
+- **Signal change**: `getPriorSliceCompletionBlocker()` now reads slice status from `slices` table via `getMilestoneSlices()` when DB is open, instead of parsing ROADMAP.md from disk. The returned blocker string is unchanged — callers see no difference.
+- **Inspection**: To verify DB path is active, check that `isDbAvailable()` returns `true` before calling `getPriorSliceCompletionBlocker()`. Inspect the `slices` table (`SELECT id, status, depends FROM slices WHERE milestone_id = ?`) to see exactly what the guard evaluates.
+- **Fallback visibility**: When DB is unavailable, the guard falls back to disk parsing via `lazyParseRoadmapSlices()`. No stderr warning is emitted from this function (the `isDbAvailable()` check is silent), but downstream callers can detect fallback by checking `isDbAvailable()` before dispatch.
+- **Failure state**: If `getMilestoneSlices()` returns an empty array for a milestone that has slices on disk, the guard silently skips that milestone (same as when no ROADMAP file exists). This is safe — it means no blocking, not false blocking.
