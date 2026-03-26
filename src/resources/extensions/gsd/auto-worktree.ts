@@ -601,6 +601,29 @@ export function syncWorktreeStateBack(
  * Sync a single milestone directory from worktree to main.
  * Copies milestone-level .md files, slice-level files, and task summaries.
  */
+/** Copy matching files from srcDir to dstDir (non-fatal per file). */
+function syncDirFiles(
+  srcDir: string,
+  dstDir: string,
+  filter: (name: string) => boolean,
+  synced: string[],
+  prefix: string,
+): void {
+  try {
+    for (const entry of readdirSync(srcDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !filter(entry.name)) continue;
+      try {
+        cpSync(join(srcDir, entry.name), join(dstDir, entry.name), { force: true });
+        synced.push(`${prefix}${entry.name}`);
+      } catch {
+        /* non-fatal */
+      }
+    }
+  } catch {
+    /* non-fatal — srcDir may not be readable */
+  }
+}
+
 function syncMilestoneDir(
   wtGsd: string,
   mainGsd: string,
@@ -613,83 +636,35 @@ function syncMilestoneDir(
   if (!existsSync(wtMilestoneDir)) return;
   mkdirSync(mainMilestoneDir, { recursive: true });
 
+  const isMd = (name: string): boolean => name.endsWith(".md");
+
   // Sync milestone-level files (SUMMARY, VALIDATION, ROADMAP, CONTEXT)
+  syncDirFiles(wtMilestoneDir, mainMilestoneDir, isMd, synced, `milestones/${mid}/`);
+
+  // Sync slice-level files (summaries, UATs) and task summaries (#1678)
+  const wtSlicesDir = join(wtMilestoneDir, "slices");
+  const mainSlicesDir = join(mainMilestoneDir, "slices");
+  if (!existsSync(wtSlicesDir)) return;
+
   try {
-    for (const entry of readdirSync(wtMilestoneDir, { withFileTypes: true })) {
-      if (entry.isFile() && entry.name.endsWith(".md")) {
-        const src = join(wtMilestoneDir, entry.name);
-        const dst = join(mainMilestoneDir, entry.name);
-        try {
-          cpSync(src, dst, { force: true });
-          synced.push(`milestones/${mid}/${entry.name}`);
-        } catch {
-          /* non-fatal */
-        }
+    for (const sliceEntry of readdirSync(wtSlicesDir, { withFileTypes: true })) {
+      if (!sliceEntry.isDirectory()) continue;
+      const sid = sliceEntry.name;
+      const wtSliceDir = join(wtSlicesDir, sid);
+      const mainSliceDir = join(mainSlicesDir, sid);
+      mkdirSync(mainSliceDir, { recursive: true });
+
+      syncDirFiles(wtSliceDir, mainSliceDir, isMd, synced, `milestones/${mid}/slices/${sid}/`);
+
+      const wtTasksDir = join(wtSliceDir, "tasks");
+      const mainTasksDir = join(mainSliceDir, "tasks");
+      if (existsSync(wtTasksDir)) {
+        mkdirSync(mainTasksDir, { recursive: true });
+        syncDirFiles(wtTasksDir, mainTasksDir, isMd, synced, `milestones/${mid}/slices/${sid}/tasks/`);
       }
     }
   } catch {
     /* non-fatal */
-  }
-
-  // Sync slice-level files (summaries, UATs)
-  const wtSlicesDir = join(wtMilestoneDir, "slices");
-  const mainSlicesDir = join(mainMilestoneDir, "slices");
-  if (existsSync(wtSlicesDir)) {
-    try {
-      for (const sliceEntry of readdirSync(wtSlicesDir, {
-        withFileTypes: true,
-      })) {
-        if (!sliceEntry.isDirectory()) continue;
-        const sid = sliceEntry.name;
-        const wtSliceDir = join(wtSlicesDir, sid);
-        const mainSliceDir = join(mainSlicesDir, sid);
-        mkdirSync(mainSliceDir, { recursive: true });
-
-        for (const fileEntry of readdirSync(wtSliceDir, {
-          withFileTypes: true,
-        })) {
-          if (fileEntry.isFile() && fileEntry.name.endsWith(".md")) {
-            const src = join(wtSliceDir, fileEntry.name);
-            const dst = join(mainSliceDir, fileEntry.name);
-            try {
-              cpSync(src, dst, { force: true });
-              synced.push(
-                `milestones/${mid}/slices/${sid}/${fileEntry.name}`,
-              );
-            } catch {
-              /* non-fatal */
-            }
-          } else if (fileEntry.isDirectory() && fileEntry.name === "tasks") {
-            // Recurse into tasks/ subdirectory to sync task summaries (#1678).
-            // Without this, T01-SUMMARY.md etc. are silently dropped on
-            // worktree teardown because the loop only processes isFile() entries.
-            const wtTasksDir = join(wtSliceDir, "tasks");
-            const mainTasksDir = join(mainSliceDir, "tasks");
-            mkdirSync(mainTasksDir, { recursive: true });
-            try {
-              for (const taskEntry of readdirSync(wtTasksDir, { withFileTypes: true })) {
-                if (taskEntry.isFile() && taskEntry.name.endsWith(".md")) {
-                  const taskSrc = join(wtTasksDir, taskEntry.name);
-                  const taskDst = join(mainTasksDir, taskEntry.name);
-                  try {
-                    cpSync(taskSrc, taskDst, { force: true });
-                    synced.push(
-                      `milestones/${mid}/slices/${sid}/tasks/${taskEntry.name}`,
-                    );
-                  } catch {
-                    /* non-fatal */
-                  }
-                }
-              }
-            } catch {
-              /* non-fatal: tasks dir read failure */
-            }
-          }
-        }
-      }
-    } catch {
-      /* non-fatal */
-    }
   }
 }
 // ─── Worktree Post-Create Hook (#597) ────────────────────────────────────────
