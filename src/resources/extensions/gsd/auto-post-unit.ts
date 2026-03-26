@@ -48,8 +48,28 @@ import {
 import { hasPendingCaptures, loadPendingCaptures } from "./captures.js";
 import { debugLog } from "./debug-logger.js";
 import { runSafely } from "./auto-utils.js";
-import type { AutoSession } from "./auto/session.js";
+import type { AutoSession, SidecarItem } from "./auto/session.js";
 
+
+/** Enqueue a sidecar item (hook, triage, or quick-task) for the main loop to
+ *  drain via runUnit. Logs the enqueue event and notifies the UI. */
+function enqueueSidecar(
+  s: AutoSession,
+  ctx: ExtensionContext,
+  entry: SidecarItem,
+  debugExtra: Record<string, unknown>,
+  notification?: string,
+): "continue" {
+  s.sidecarQueue.push(entry);
+  debugLog("postUnitPostVerification", {
+    phase: "sidecar-enqueue",
+    kind: entry.kind,
+    unitId: entry.unitId,
+    ...debugExtra,
+  });
+  if (notification) ctx.ui.notify(notification, "info");
+  return "continue";
+}
 /** Unit types that only touch `.gsd/` internal state files (no code changes).
  *  Auto-commit is skipped for these — their state files are picked up by the
  *  next actual task commit via `smartStage()`. */
@@ -496,23 +516,11 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       }
       persistHookState(s.basePath);
 
-      s.sidecarQueue.push({
-        kind: "hook",
-        unitType: hookUnit.unitType,
-        unitId: hookUnit.unitId,
-        prompt: hookUnit.prompt,
-        model: hookUnit.model,
-      });
-
-      debugLog("postUnitPostVerification", {
-        phase: "sidecar-enqueue",
-        kind: "hook",
-        unitType: hookUnit.unitType,
-        unitId: hookUnit.unitId,
-        hookName: hookUnit.hookName,
-      });
-
-      return "continue";
+      return enqueueSidecar(
+        s, ctx,
+        { kind: "hook", unitType: hookUnit.unitType, unitId: hookUnit.unitId, prompt: hookUnit.prompt, model: hookUnit.model },
+        { hookName: hookUnit.hookName },
+      );
     }
 
     // Check if a hook requested a retry of the trigger unit
@@ -611,26 +619,12 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
             }
 
             const triageUnitId = `${mid}/${sid}/triage`;
-            s.sidecarQueue.push({
-              kind: "triage",
-              unitType: "triage-captures",
-              unitId: triageUnitId,
-              prompt,
-            });
-
-            debugLog("postUnitPostVerification", {
-              phase: "sidecar-enqueue",
-              kind: "triage",
-              unitId: triageUnitId,
-              pendingCount: pending.length,
-            });
-
-            ctx.ui.notify(
+            return enqueueSidecar(
+              s, ctx,
+              { kind: "triage", unitType: "triage-captures", unitId: triageUnitId, prompt },
+              { pendingCount: pending.length },
               `Triaging ${pending.length} pending capture${pending.length === 1 ? "" : "s"}...`,
-              "info",
             );
-
-            return "continue";
           }
         }
       }
@@ -659,27 +653,12 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
       markCaptureExecuted(s.basePath, capture.id);
 
       const qtUnitId = `${s.currentMilestoneId}/${capture.id}`;
-      s.sidecarQueue.push({
-        kind: "quick-task",
-        unitType: "quick-task",
-        unitId: qtUnitId,
-        prompt,
-        captureId: capture.id,
-      });
-
-      debugLog("postUnitPostVerification", {
-        phase: "sidecar-enqueue",
-        kind: "quick-task",
-        unitId: qtUnitId,
-        captureId: capture.id,
-      });
-
-      ctx.ui.notify(
+      return enqueueSidecar(
+        s, ctx,
+        { kind: "quick-task", unitType: "quick-task", unitId: qtUnitId, prompt, captureId: capture.id },
+        { captureId: capture.id },
         `Executing quick-task: ${capture.id} — "${capture.text}"`,
-        "info",
       );
-
-      return "continue";
     } catch (e) {
       debugLog("postUnit", { phase: "quick-task-dispatch", error: String(e) });
     }
