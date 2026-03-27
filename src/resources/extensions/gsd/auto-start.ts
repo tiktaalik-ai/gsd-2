@@ -58,8 +58,9 @@ import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone } from "./gsd-db.js";
+import { isDbAvailable, getMilestone, openDatabase } from "./gsd-db.js";
 import { hideFooter } from "./auto-dashboard.js";
+import { resolveProjectRootDbPath } from "./bootstrap/dynamic-tools.js";
 import {
   debugLog,
   enableDebug,
@@ -103,6 +104,20 @@ export interface BootstrapDeps {
  *  cycles indefinitely when the discuss workflow doesn't produce a milestone. */
 let _consecutiveCompleteBootstraps = 0;
 const MAX_CONSECUTIVE_COMPLETE_BOOTSTRAPS = 2;
+
+async function openProjectDbIfPresent(basePath: string): Promise<void> {
+  const gsdDbPath = resolveProjectRootDbPath(basePath);
+  if (!existsSync(gsdDbPath) || isDbAvailable()) return;
+
+  try {
+    openDatabase(gsdDbPath);
+  } catch (err) {
+    process.stderr.write(
+      `gsd-db: failed to open existing database: ${(err as Error).message}\n`,
+    );
+  }
+}
+
 export async function bootstrapAutoSession(
   s: AutoSession,
   ctx: ExtensionCommandContext,
@@ -264,6 +279,10 @@ export async function bootstrapAutoSession(
       });
       ctx.ui.notify(`Debug logging enabled → ${getDebugLogPath()}`, "info");
     }
+
+    // Open the project DB before the first derive so resume uses DB truth
+    // immediately on cold starts instead of falling back to markdown (#2841).
+    await openProjectDbIfPresent(base);
 
     // Invalidate caches before initial state derivation
     invalidateAllCaches();
@@ -535,15 +554,14 @@ export async function bootstrapAutoSession(
     }
 
     // ── DB lifecycle ──
-    const gsdDbPath = join(s.basePath, ".gsd", "gsd.db");
+    const gsdDbPath = resolveProjectRootDbPath(s.basePath);
     const gsdDirPath = join(s.basePath, ".gsd");
     if (existsSync(gsdDirPath) && !existsSync(gsdDbPath)) {
       const hasDecisions = existsSync(join(gsdDirPath, "DECISIONS.md"));
       const hasRequirements = existsSync(join(gsdDirPath, "REQUIREMENTS.md"));
       const hasMilestones = existsSync(join(gsdDirPath, "milestones"));
       try {
-        const { openDatabase: openDb } = await import("./gsd-db.js");
-        openDb(gsdDbPath);
+        openDatabase(gsdDbPath);
         if (hasDecisions || hasRequirements || hasMilestones) {
           const { migrateFromMarkdown } = await import("./md-importer.js");
           migrateFromMarkdown(s.basePath);
@@ -556,8 +574,7 @@ export async function bootstrapAutoSession(
     }
     if (existsSync(gsdDbPath) && !isDbAvailable()) {
       try {
-        const { openDatabase: openDb } = await import("./gsd-db.js");
-        openDb(gsdDbPath);
+        openDatabase(gsdDbPath);
       } catch (err) {
         process.stderr.write(
           `gsd-db: failed to open existing database: ${(err as Error).message}\n`,
