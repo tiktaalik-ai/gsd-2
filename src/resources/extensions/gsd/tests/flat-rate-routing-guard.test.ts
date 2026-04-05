@@ -14,6 +14,16 @@ describe("flat-rate provider routing guard (#3453)", () => {
     assert.equal(isFlatRateProvider("github-copilot"), true);
   });
 
+  test("isFlatRateProvider returns true for copilot alias", () => {
+    assert.equal(isFlatRateProvider("copilot"), true);
+  });
+
+  test("isFlatRateProvider is case-insensitive", () => {
+    assert.equal(isFlatRateProvider("GitHub-Copilot"), true);
+    assert.equal(isFlatRateProvider("GITHUB-COPILOT"), true);
+    assert.equal(isFlatRateProvider("Copilot"), true);
+  });
+
   test("isFlatRateProvider returns false for anthropic", () => {
     assert.equal(isFlatRateProvider("anthropic"), false);
   });

@@ -77,9 +77,20 @@ export async function selectAndApplyModel(
     // Disable routing for flat-rate providers like GitHub Copilot (#3453).
     // All models cost the same per request, so downgrading to a cheaper
     // model provides no cost benefit — it only degrades quality.
+    // Fail-closed: if primary model can't be resolved, fall back to
+    // provider-level signals rather than allowing unwanted downgrades.
     if (routingConfig.enabled) {
       const primaryModel = resolveModelId(modelConfig.primary, availableModels, ctx.model?.provider);
-      if (primaryModel && isFlatRateProvider(primaryModel.provider)) {
+      if (primaryModel) {
+        if (isFlatRateProvider(primaryModel.provider)) {
+          routingConfig.enabled = false;
+        }
+      } else if (
+        (autoModeStartModel && isFlatRateProvider(autoModeStartModel.provider))
+        || (ctx.model?.provider && isFlatRateProvider(ctx.model.provider))
+      ) {
+        // Primary model unresolvable but provider signals indicate flat-rate —
+        // disable routing to prevent quality degradation.
         routingConfig.enabled = false;
       }
     }
@@ -337,9 +348,11 @@ export function resolveModelId<T extends { id: string; provider: string }>(
 /**
  * Flat-rate providers charge the same per request regardless of model.
  * Dynamic routing provides no cost benefit — it only degrades quality (#3453).
+ * Uses case-insensitive matching with alias support to prevent fail-open on
+ * provider naming variations (e.g. "copilot" vs "github-copilot").
  */
-const FLAT_RATE_PROVIDERS = new Set(["github-copilot"]);
+const FLAT_RATE_PROVIDERS = new Set(["github-copilot", "copilot"]);
 
 export function isFlatRateProvider(provider: string): boolean {
-  return FLAT_RATE_PROVIDERS.has(provider);
+  return FLAT_RATE_PROVIDERS.has(provider.toLowerCase());
 }
