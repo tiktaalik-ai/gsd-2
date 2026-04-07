@@ -35,14 +35,17 @@ const registerHooksSrc = readFileSync(
 );
 
 describe('prompt step ordering (#3696)', () => {
-  test('gsd_requirement_update appears before gsd_complete_milestone', () => {
-    const reqUpdateIdx = completeMilestoneMd.indexOf('gsd_requirement_update');
-    const completeMilestoneIdx = completeMilestoneMd.indexOf('gsd_complete_milestone');
-    assert.ok(reqUpdateIdx > -1, 'gsd_requirement_update should be in complete-milestone.md');
-    assert.ok(completeMilestoneIdx > -1, 'gsd_complete_milestone should be in complete-milestone.md');
+  test('gsd_requirement_update step appears before gsd_complete_milestone step', () => {
+    // Search for the numbered step definitions, not early "Do NOT call" warnings
+    const reqUpdateMatch = completeMilestoneMd.match(/^\d+\.\s.*gsd_requirement_update/m);
+    const completeMilestoneMatch = completeMilestoneMd.match(/^\d+\.\s.*gsd_complete_milestone/m);
+    assert.ok(reqUpdateMatch, 'gsd_requirement_update should appear in a numbered step');
+    assert.ok(completeMilestoneMatch, 'gsd_complete_milestone should appear in a numbered step');
+    const reqUpdateIdx = completeMilestoneMd.indexOf(reqUpdateMatch![0]);
+    const completeMilestoneIdx = completeMilestoneMd.indexOf(completeMilestoneMatch![0]);
     assert.ok(
       reqUpdateIdx < completeMilestoneIdx,
-      'gsd_requirement_update (step 9) must come before gsd_complete_milestone (step 10)',
+      'gsd_requirement_update step must come before gsd_complete_milestone step',
     );
   });
 
